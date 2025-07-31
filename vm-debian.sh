@@ -168,7 +168,8 @@ function get_vm_settings() {
   while true; do
     echo -e "\n${INFO}${BOLD}Configuration de la VM${CL}\n"
     
-    read -p "ID de la VM (défaut: $default_vmid): " VMID
+    echo -n "ID de la VM (défaut: $default_vmid): "
+    read VMID
     VMID=${VMID:-$default_vmid}
     
     if [[ ! "$VMID" =~ ^[0-9]+$ ]]; then
@@ -185,7 +186,8 @@ function get_vm_settings() {
   done
   
   # Nom d'hôte
-  read -p "Nom d'hôte (défaut: debian-fr): " hostname_input
+  echo -n "Nom d'hôte (défaut: debian-fr): "
+  read hostname_input
   HN=${hostname_input:-debian-fr}
   HN=$(echo ${HN,,} | tr -d ' ')
   
@@ -196,7 +198,8 @@ function get_vm_settings() {
   else
     echo -e "  - vmbr0 (défaut)"
   fi
-  read -p "Bridge réseau (défaut: vmbr0): " bridge_input
+  echo -n "Bridge réseau (défaut: vmbr0): "
+  read bridge_input
   BRG=${bridge_input:-vmbr0}
   
   # Validation du bridge
@@ -237,7 +240,8 @@ function get_vm_settings() {
     echo -e "\n${INFO}Stockage sélectionné automatiquement: ${BL}$STORAGE${CL}"
   else
     while true; do
-      read -p "Choisir le stockage (1-${#STORAGE_LIST[@]}, défaut: 1): " storage_choice
+      echo -n "Choisir le stockage (1-${#STORAGE_LIST[@]}, défaut: 1): "
+      read storage_choice
       storage_choice=${storage_choice:-1}
       
       if [[ "$storage_choice" =~ ^[0-9]+$ ]] && [ "$storage_choice" -ge 1 ] && [ "$storage_choice" -le ${#STORAGE_LIST[@]} ]; then
@@ -251,9 +255,11 @@ function get_vm_settings() {
   # Mot de passe root
   while true; do
     echo -e "\n${INFO}Configuration du mot de passe root${CL}"
-    read -s -p "Mot de passe root: " ROOT_PASSWORD
+    echo -n "Mot de passe root: "
+    read -s ROOT_PASSWORD
     echo
-    read -s -p "Confirmer le mot de passe: " ROOT_PASSWORD_CONFIRM
+    echo -n "Confirmer le mot de passe: "
+    read -s ROOT_PASSWORD_CONFIRM
     echo
     
     if [ "$ROOT_PASSWORD" = "$ROOT_PASSWORD_CONFIRM" ]; then
@@ -269,13 +275,16 @@ function get_vm_settings() {
   
   # Configuration avancée optionnelle
   echo -e "\n${INFO}Configuration avancée (optionnel)${CL}"
-  read -p "Taille du disque en GB (défaut: 20): " disk_input
+  echo -n "Taille du disque en GB (défaut: 20): "
+  read disk_input
   DISK_SIZE="${disk_input:-20}G"
   
-  read -p "Nombre de cœurs CPU (défaut: 2): " cpu_input
+  echo -n "Nombre de cœurs CPU (défaut: 2): "
+  read cpu_input
   CORE_COUNT=${cpu_input:-2}
   
-  read -p "RAM en MB (défaut: 2048): " ram_input
+  echo -n "RAM en MB (défaut: 2048): "
+  read ram_input
   RAM_SIZE=${ram_input:-2048}
   
   # Résumé de la configuration
@@ -293,7 +302,8 @@ function get_vm_settings() {
   echo -e "Utilisateur: ${BL}Root uniquement${CL}"
   
   echo -e "\n"
-  read -p "Confirmer la création de la VM ? (o/N): " confirm
+  echo -n "Confirmer la création de la VM ? (o/N): "
+  read confirm
   if [[ ! "$confirm" =~ ^[oO]$ ]]; then
     echo -e "\n${CROSS}Création annulée${CL}"
     exit 0
@@ -456,7 +466,8 @@ Utilisateur: root uniquement"
   
   # Demander si on démarre la VM
   echo -e "\n"
-  read -p "Démarrer la VM maintenant ? (o/N): " start_vm
+  echo -n "Démarrer la VM maintenant ? (o/N): "
+  read start_vm
   if [[ "$start_vm" =~ ^[oO]$ ]]; then
     msg_info "Démarrage de la VM"
     qm start $VMID
@@ -492,7 +503,8 @@ function main() {
   echo -e "  • Configuration Cloud-init automatique"
   
   echo -e "\n"
-  read -p "Continuer ? (o/N): " continue_script
+  echo -n "Continuer ? (o/N): "
+  read continue_script
   if [[ ! "$continue_script" =~ ^[oO]$ ]]; then
     echo -e "\n${CROSS}Script annulé${CL}"
     show_usage

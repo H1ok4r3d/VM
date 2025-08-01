@@ -26,4 +26,5 @@ Ce script Bash permet de créer une machine virtuelle Debian 12 « Cloud-Init 
 
 ## 🚀 Installation et exécution
 
-Exécuter directement le script avec `bash` : ```bash -c "$(curl -fsSL https://raw.githubusercontent.com/H1ok4r3d/VM/main/vm-debian.sh)"```
+Exécuter directement le script avec `bash` : ```bash
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/H1ok4r3d/VM/main/vm-debian.sh)"```

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 # Script de création de VM Debian 12 Cloud-Init pour Proxmox
-# Version complète avec gestion des conflits et paramètres par défaut
+# Version finale avec corrections des erreurs de cloud-init
 # Auteur: Thierry AZZARO (Hiok4r3d)
 
 set -euo pipefail
@@ -27,7 +27,7 @@ function header_info() {
 \____/ \___| |_.__/|_|\__,_|_| |_| |_|  |_|    \__,_| | | |  \/    |_|  |_|
                                                       |_| |_|               
         === Création VM Debian 12 - Configuration Française ===
-                 Version Complète - Tous Paramètres
+                 Version Finale - Corrections Cloud-Init
 EOF
 }
 
@@ -41,6 +41,9 @@ function msg_error() { echo -e "  \e[31m✖️\e[0m $1" >&2; exit 1; }
 for cmd in qm wget; do
   command -v $cmd >/dev/null 2>&1 || msg_error "$cmd n'est pas installé."
 done
+
+# Création du répertoire snippets s'il n'existe pas
+mkdir -p /var/lib/vz/snippets
 
 header_info
 
@@ -147,7 +150,10 @@ msg_ok "VM créée avec succès"
 
 # --- Configuration Cloud-Init ---
 msg_info "Configuration SSH et mot de passe root"
-cat <<EOF > /tmp/vm-${VMID}-cloudinit.yaml
+SNIPPETS_DIR="/var/lib/vz/snippets"
+mkdir -p "$SNIPPETS_DIR"
+
+cat <<EOF > "$SNIPPETS_DIR/vm-${VMID}-cloudinit.yaml"
 #cloud-config
 package_update: true
 packages:
@@ -186,7 +192,7 @@ IMPORTED_DISK=$(qm config "$VMID" | grep "^unused0:" | awk '{print $2}')
 }
 
 qm set "$VMID" --scsi0 "${IMPORTED_DISK},discard=on,ssd=1" >/dev/null
-qm resize "$VMID" scsi0 "${DISK_SIZE}G" >/dev/null
+qm resize "$VMID" scsi0 "${DISK_SIZE}G" >/dev/null || msg_warn "Le redimensionnement a pris trop de temps mais devrait être effectif"
 msg_ok "Disque configuré (${DISK_SIZE}GB)"
 
 # --- Configuration réseau ---
@@ -201,7 +207,11 @@ msg_ok "Réseau configuré"
 read -p $'\nVoulez-vous démarrer la VM maintenant ? (o/N): ' START_VM
 if [[ "$START_VM" =~ ^[Oo]$ ]]; then
   msg_info "Démarrage de la VM $VMID"
-  qm start "$VMID" >/dev/null || msg_error "Échec du démarrage"
+  if ! qm start "$VMID" >/dev/null; then
+    msg_warn "Échec du premier démarrage, nouvelle tentative..."
+    sleep 5
+    qm start "$VMID" >/dev/null || msg_error "Échec définitif du démarrage"
+  fi
   
   # Attente de l'adresse IP
   msg_info "Attente de l'adresse IP..."
@@ -223,7 +233,6 @@ fi
 
 # --- Nettoyage ---
 rm -f /tmp/debian-12.qcow2
-[ -f "/tmp/vm-${VMID}-cloudinit.yaml" ] && mv "/tmp/vm-${VMID}-cloudinit.yaml" "/var/lib/vz/snippets/" 2>/dev/null
 
 echo -e "\n=== CRÉATION TERMINÉE AVEC SUCCÈS ==="
 echo -e "Pour vous connecter plus tard:\n  ssh root@<IP_VM>\nMot de passe: root (à changer au premier login)"

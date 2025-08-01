@@ -1,10 +1,20 @@
 #!/usr/bin/env bash
 
 # Script de création de VM Debian 12 Cloud-Init pour Proxmox
-# Version optimisée avec gestion automatique des VMID, CPU et paramètres par défaut
+# Version complète avec gestion des conflits et paramètres par défaut
 # Auteur: Thierry AZZARO (Hiok4r3d)
 
 set -euo pipefail
+
+# Fonction pour trouver le premier VMID disponible
+function find_available_vmid() {
+    local start_vmid=${1:-100}
+    while qm list | awk '{print $1}' | grep -q "^${start_vmid}$" || \
+          pct list | awk '{print $1}' | grep -q "^${start_vmid}$"; do
+        ((start_vmid++))
+    done
+    echo $start_vmid
+}
 
 # Fonction pour afficher l'en-tête
 function header_info() {
@@ -17,28 +27,20 @@ function header_info() {
 \____/ \___| |_.__/|_|\__,_|_| |_| |_|  |_|    \__,_| | | |  \/    |_|  |_|
                                                       |_| |_|               
         === Création VM Debian 12 - Configuration Française ===
-                 Version Optimisée - Paramètres Automatiques
+                 Version Complète - Tous Paramètres
 EOF
 }
 
-# Fonctions utilitaires
+# Fonctions de message
 function msg_info() { echo -e "  \e[36m➤\e[0m $1"; }
 function msg_ok() { echo -e "  \e[32m✔️\e[0m $1"; }
+function msg_warn() { echo -e "  \e[33m⚠️\e[0m $1"; }
 function msg_error() { echo -e "  \e[31m✖️\e[0m $1" >&2; exit 1; }
 
 # Vérification des dépendances
 for cmd in qm wget; do
   command -v $cmd >/dev/null 2>&1 || msg_error "$cmd n'est pas installé."
 done
-
-# Fonction pour trouver le premier VMID disponible
-function find_available_vmid() {
-  local start_vmid=${1:-100}
-  while qm list | awk '{print $1}' | grep -q "^${start_vmid}$"; do
-    ((start_vmid++))
-  done
-  echo $start_vmid
-}
 
 header_info
 
@@ -50,6 +52,12 @@ read -p $'\nÊtes-vous sûr de vouloir créer une nouvelle VM ? (o/N): ' CREATE_
 DEFAULT_VMID=$(find_available_vmid 100)
 read -p $'\nID de la VM (défaut: premier disponible à partir de 100 - actuel: '$DEFAULT_VMID$'): ' VMID
 VMID=${VMID:-$DEFAULT_VMID}
+
+# Vérification finale que le VMID est disponible
+if qm list | awk '{print $1}' | grep -q "^${VMID}$" || \
+   pct list | awk '{print $1}' | grep -q "^${VMID}$"; then
+    msg_error "L'ID $VMID est déjà utilisé par une VM ou un conteneur. Veuillez choisir un autre ID."
+fi
 
 read -p "Nom d'hôte (défaut: debian-fr): " VMNAME
 VMNAME=${VMNAME:-debian-fr}
@@ -93,7 +101,7 @@ CPU_CORES=${CUSTOM_CPU_CORES:-$((CPU_CORES/2))}
 
 # --- Résumé ---
 echo -e "\n=== RÉSUMÉ DE LA CONFIGURATION ==="
-echo "ID VM: $VMID (automatique)"
+echo "ID VM: $VMID (vérifié disponible)"
 echo "Nom d'hôte: $VMNAME"
 echo "Bridge: $BRIDGE"
 echo "Stockage: $STORAGE"
@@ -116,7 +124,7 @@ msg_ok "Image téléchargée avec succès"
 
 # --- Création de la VM ---
 msg_info "Création de la VM $VMID"
-qm create $VMID \
+if ! qm create $VMID \
   --name "$VMNAME" \
   --memory $RAM_SIZE \
   --cores $CPU_CORES \
@@ -131,7 +139,10 @@ qm create $VMID \
   --ciuser root \
   --cipassword "$ROOT_PASSWORD" \
   --keyboard fr \
-  --agent enabled=1 >/dev/null || msg_error "Échec de la création de la VM"
+  --agent enabled=1 >/dev/null 2>&1; then
+    rm -f /tmp/debian-12.qcow2
+    msg_error "Échec de la création de la VM. L'ID $VMID est peut-être déjà utilisé."
+fi
 msg_ok "VM créée avec succès"
 
 # --- Configuration Cloud-Init ---
@@ -161,12 +172,18 @@ msg_ok "Configuration SSH appliquée"
 
 # --- Configuration du disque ---
 msg_info "Importation du disque"
-qm importdisk "$VMID" /tmp/debian-12.qcow2 "$STORAGE" >/dev/null || msg_error "Échec de l'importation"
+qm importdisk "$VMID" /tmp/debian-12.qcow2 "$STORAGE" >/dev/null || {
+    rm -f /tmp/debian-12.qcow2
+    msg_error "Échec de l'importation du disque"
+}
 msg_ok "Disque importé avec succès"
 
 msg_info "Configuration du stockage"
 IMPORTED_DISK=$(qm config "$VMID" | grep "^unused0:" | awk '{print $2}')
-[ -z "$IMPORTED_DISK" ] && msg_error "Disque non détecté"
+[ -z "$IMPORTED_DISK" ] && {
+    rm -f /tmp/debian-12.qcow2
+    msg_error "Disque non détecté dans la configuration de la VM"
+}
 
 qm set "$VMID" --scsi0 "${IMPORTED_DISK},discard=on,ssd=1" >/dev/null
 qm resize "$VMID" scsi0 "${DISK_SIZE}G" >/dev/null
@@ -206,7 +223,7 @@ fi
 
 # --- Nettoyage ---
 rm -f /tmp/debian-12.qcow2
-mv "/tmp/vm-${VMID}-cloudinit.yaml" "/var/lib/vz/snippets/" 2>/dev/null || true
+[ -f "/tmp/vm-${VMID}-cloudinit.yaml" ] && mv "/tmp/vm-${VMID}-cloudinit.yaml" "/var/lib/vz/snippets/" 2>/dev/null
 
 echo -e "\n=== CRÉATION TERMINÉE AVEC SUCCÈS ==="
-echo -e "Pour vous connecter plus tard:\n  ssh root@<IP_VM>\nMot de passe: root"
+echo -e "Pour vous connecter plus tard:\n  ssh root@<IP_VM>\nMot de passe: root (à changer au premier login)"

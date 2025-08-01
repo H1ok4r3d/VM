@@ -54,6 +54,7 @@ RANDOM_UUID="$(cat /proc/sys/kernel/random/uuid)"
 DISK_SIZE="20G"
 CORE_COUNT=$(nproc)  # Utilise tous les cœurs disponibles
 RAM_SIZE="2048"      # 2048 MB par défaut
+ROOT_PASSWORD="root" # Mot de passe root par défaut
 HN="debian-fr"
 TEMP_DIR=$(mktemp -d)
 
@@ -263,26 +264,8 @@ function get_vm_settings() {
     done
   fi
   
-  # Mot de passe root
-  while true; do
-    echo -e "\n${INFO}Configuration du mot de passe root${CL}"
-    echo -n "Mot de passe root: "
-    read -s ROOT_PASSWORD
-    echo
-    echo -n "Confirmer le mot de passe: "
-    read -s ROOT_PASSWORD_CONFIRM
-    echo
-    
-    if [ "$ROOT_PASSWORD" = "$ROOT_PASSWORD_CONFIRM" ]; then
-      if [ ${#ROOT_PASSWORD} -lt 6 ]; then
-        msg_error "Le mot de passe doit contenir au moins 6 caractères"
-        continue
-      fi
-      break
-    else
-      msg_error "Les mots de passe ne correspondent pas"
-    fi
-  done
+  # Mot de passe root (défini par défaut à "root")
+  # Pas de demande interactive - mot de passe fixe pour simplifier
   
   # Configuration avancée optionnelle
   echo -e "\n${INFO}Configuration avancée (optionnel)${CL}"
@@ -301,6 +284,7 @@ function get_vm_settings() {
   echo -e "RAM: ${BL}$RAM_SIZE MB${CL}"
   echo -e "MAC: ${BL}$GEN_MAC${CL}"
   echo -e "BIOS: ${BL}SeaBIOS (défaut)${CL}"
+  echo -e "Mot de passe root: ${BL}root${CL}"
   echo -e "Langue: ${BL}Français${CL}"
   echo -e "Clavier: ${BL}Français${CL}"
   echo -e "Utilisateur: ${BL}Root uniquement${CL}"
@@ -494,7 +478,7 @@ Post-installation:
 
 Notes:
 - L'agent QEMU sera disponible après installation des guest tools
-- Première connexion: root avec le mot de passe défini"
+- Première connexion: root / mot de passe: root"
   
   qm set "$VMID" -description "$DESCRIPTION" >/dev/null
   
@@ -528,7 +512,7 @@ Notes:
       echo -e "1. Attendre que la VM termine son démarrage (1-2 minutes)"
       echo -e "2. Se connecter: ${BL}qm terminal $VMID${CL}"
       echo -e "3. Configurer le français: ${BL}bash /var/lib/vz/snippets/post-install-${VMID}.sh${CL}"
-      echo -e "4. Connexion: utilisateur ${BL}root${CL} avec le mot de passe défini"
+      echo -e "4. Connexion: utilisateur ${BL}root${CL} / mot de passe ${BL}root${CL}"
       
       echo -e "\n${WARN}Note: L'agent QEMU sera disponible après installation des guest tools${CL}"
     else
@@ -556,7 +540,7 @@ function main() {
   echo -e "\n${INFO}Ce script va créer une VM Debian 12 avec:${CL}"
   echo -e "  • BIOS par défaut (SeaBIOS)"
   echo -e "  • Configuration post-installation pour le français"
-  echo -e "  • Utilisateur root uniquement"
+  echo -e "  • Utilisateur root avec mot de passe: ${BL}root${CL}"
   echo -e "  • Configuration Cloud-init basique"
   echo -e "  • CPU: Utilisation maximale ($(nproc) cœurs)"
   echo -e "  • RAM: 2048 MB par défaut"

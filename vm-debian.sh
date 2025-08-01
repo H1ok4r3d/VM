@@ -52,8 +52,8 @@ WARN="${TAB}⚠️${TAB}${CL}"
 GEN_MAC=02:$(openssl rand -hex 5 | awk '{print toupper($0)}' | sed 's/\(..\)/\1:/g; s/.$//')
 RANDOM_UUID="$(cat /proc/sys/kernel/random/uuid)"
 DISK_SIZE="20G"
-CORE_COUNT="2"
-RAM_SIZE="2048"
+CORE_COUNT=$(nproc)  # Utilise tous les cœurs disponibles
+RAM_SIZE="2048"      # 2048 MB par défaut
 HN="debian-fr"
 TEMP_DIR=$(mktemp -d)
 
@@ -289,14 +289,6 @@ function get_vm_settings() {
   echo -n "Taille du disque en GB (défaut: 20): "
   read disk_input
   DISK_SIZE="${disk_input:-20}G"
-  
-  echo -n "Nombre de cœurs CPU (défaut: 2): "
-  read cpu_input
-  CORE_COUNT=${cpu_input:-2}
-  
-  echo -n "RAM en MB (défaut: 2048): "
-  read ram_input
-  RAM_SIZE=${ram_input:-2048}
   
   # Résumé de la configuration
   echo -e "\n${BGN}=== RÉSUMÉ DE LA CONFIGURATION ===${CL}"

@@ -6,7 +6,15 @@
 # License: MIT
 # 
 # Usage depuis GitHub:
-# bash <(curl -fsSL https://raw.githubusercontent.com/H1ok4r3d/VM/main/vm-debian.sh)
+# bash -c "$(curl -fsSL https://raw.githubusercontent.com/H1ok4r3d/VM/main/vm-debian.sh)"
+
+# Mode debug si argument --debug
+if [[ "$1" == "--debug" ]]; then
+  set -x
+  DEBUG=true
+else
+  DEBUG=false
+fi
 
 function header_info {
   clear
@@ -163,6 +171,9 @@ function get_valid_nextid() {
 function get_vm_settings() {
   header_info
   
+  # Rediriger vers /dev/tty pour les interactions
+  exec < /dev/tty
+  
   # ID de la VM
   local default_vmid=$(get_valid_nextid)
   while true; do
@@ -297,6 +308,7 @@ function get_vm_settings() {
   echo -e "CPU: ${BL}$CORE_COUNT cœurs${CL}"
   echo -e "RAM: ${BL}$RAM_SIZE MB${CL}"
   echo -e "MAC: ${BL}$GEN_MAC${CL}"
+  echo -e "BIOS: ${BL}SeaBIOS (défaut)${CL}"
   echo -e "Langue: ${BL}Français${CL}"
   echo -e "Clavier: ${BL}Français${CL}"
   echo -e "Utilisateur: ${BL}Root uniquement${CL}"
@@ -360,16 +372,13 @@ function create_vm() {
   esac
   
   local DISK0="vm-${VMID}-disk-0${DISK_EXT}"
-  local DISK1="vm-${VMID}-disk-1${DISK_EXT}"
   local DISK0_REF="${STORAGE}:${DISK_REF}${DISK0}"
-  local DISK1_REF="${STORAGE}:${DISK_REF}${DISK1}"
   
-  # Création de la VM
+  # Création de la VM avec BIOS par défaut (SeaBIOS)
   qm create $VMID \
     -agent 1 \
     -tablet 0 \
     -localtime 1 \
-    -bios ovmf \
     -cores $CORE_COUNT \
     -memory $RAM_SIZE \
     -name $HN \
@@ -378,15 +387,13 @@ function create_vm() {
     -ostype l26 \
     -scsihw virtio-scsi-pci
   
-  # Allocation et import du disque
-  pvesm alloc $STORAGE $VMID $DISK0 4M 1>&/dev/null
+  # Import du disque directement
   qm importdisk $VMID ${FILE} $STORAGE ${DISK_IMPORT} 1>&/dev/null
   
-  # Configuration des disques
+  # Configuration du disque principal
   qm set $VMID \
-    -efidisk0 ${DISK0_REF},efitype=4m \
-    -scsi0 ${DISK1_REF},discard=on,ssd=1,size=${DISK_SIZE} \
-    -scsi1 ${STORAGE}:cloudinit \
+    -scsi0 ${STORAGE}:vm-${VMID}-disk-0,discard=on,ssd=1,size=${DISK_SIZE} \
+    -ide2 ${STORAGE}:cloudinit \
     -boot order=scsi0 \
     -serial0 socket >/dev/null
   
@@ -396,54 +403,65 @@ function create_vm() {
 function configure_cloud_init() {
   msg_info "Configuration Cloud-init (français)"
   
-  # Génération de la configuration utilisateur
-  local USER_DATA=$(cat <<EOF
-#cloud-config
-locale: fr_FR.UTF-8
-keyboard:
-  layout: fr
-timezone: Europe/Paris
-package_upgrade: true
-packages:
-  - locales-all
-  - keyboard-configuration
-  - console-setup
-ssh_pwauth: true
-disable_root: false
-chpasswd:
-  list: |
-    root:${ROOT_PASSWORD}
-  expire: false
-runcmd:
-  - localectl set-locale LANG=fr_FR.UTF-8
-  - localectl set-keymap fr
-  - setupcon
-  - dpkg-reconfigure -f noninteractive locales
-  - dpkg-reconfigure -f noninteractive keyboard-configuration
-  - systemctl restart systemd-logind
-final_message: "VM Debian 12 configurée avec succès!"
-EOF
-)
+  # Configuration Cloud-init basique sans fichier personnalisé
+  qm set $VMID \
+    --ciuser root \
+    --cipassword "$ROOT_PASSWORD" \
+    --searchdomain local \
+    --nameserver 8.8.8.8 >/dev/null 2>&1
   
-  # Déterminer le répertoire des snippets
+  # Création d'un script de post-installation pour la localisation
   local SNIPPET_DIR="/var/lib/vz/snippets"
-  if [ "$STORAGE" != "local" ]; then
-    local STORAGE_PATH=$(pvesm path ${STORAGE}: 2>/dev/null | head -n1)
-    if [ -n "$STORAGE_PATH" ]; then
-      SNIPPET_DIR="${STORAGE_PATH%/}/snippets"
-    fi
-  fi
-  
-  # Créer le répertoire si nécessaire
   mkdir -p "$SNIPPET_DIR"
   
-  # Écriture du fichier user-data
-  echo "$USER_DATA" > "${SNIPPET_DIR}/user-data-${VMID}.yml"
+  # Script de post-installation pour configurer le français
+  local POST_INSTALL_SCRIPT="${SNIPPET_DIR}/post-install-${VMID}.sh"
   
-  # Application de la configuration Cloud-init
-  qm set $VMID --cicustom "user=${STORAGE}:snippets/user-data-${VMID}.yml" >/dev/null
+  cat > "$POST_INSTALL_SCRIPT" << 'EOF'
+#!/bin/bash
+# Script de post-installation pour configuration française
+
+# Configuration locale
+export DEBIAN_FRONTEND=noninteractive
+
+# Installation des paquets nécessaires
+apt-get update -q
+apt-get install -y locales keyboard-configuration console-setup locales-all
+
+# Configuration locale française
+sed -i '/^# fr_FR.UTF-8 UTF-8/s/^# //' /etc/locale.gen
+locale-gen
+update-locale LANG=fr_FR.UTF-8 LC_ALL=fr_FR.UTF-8
+
+# Configuration clavier français
+echo 'XKBLAYOUT="fr"' > /etc/default/keyboard
+echo 'XKBVARIANT=""' >> /etc/default/keyboard
+echo 'XKBOPTIONS=""' >> /etc/default/keyboard
+
+# Configuration console
+echo 'CHARMAP="UTF-8"' > /etc/default/console-setup
+echo 'CODESET="Lat15"' >> /etc/default/console-setup
+echo 'FONTFACE="TerminusBold"' >> /etc/default/console-setup
+echo 'FONTSIZE="16"' >> /etc/default/console-setup
+
+# Configuration timezone
+timedatectl set-timezone Europe/Paris
+
+# Application des changements
+dpkg-reconfigure -f noninteractive locales
+dpkg-reconfigure -f noninteractive keyboard-configuration
+dpkg-reconfigure -f noninteractive console-setup
+setupcon
+
+# Nettoyage
+rm -f /root/post-install.sh
+
+echo "Configuration française terminée!"
+EOF
   
-  msg_ok "Cloud-init configuré (français, root uniquement)"
+  chmod +x "$POST_INSTALL_SCRIPT"
+  
+  msg_ok "Cloud-init configuré avec script de post-installation"
 }
 
 function finalize_vm() {
@@ -456,9 +474,14 @@ function finalize_vm() {
   local DESCRIPTION="VM Debian 12 - Configuration Française
 Créée le: $(date '+%d/%m/%Y à %H:%M')
 Script: https://github.com/H1ok4r3d/VM
+BIOS: SeaBIOS (défaut)
 Langue: Français
 Clavier: Français  
-Utilisateur: root uniquement"
+Utilisateur: root uniquement
+
+Post-installation:
+1. Se connecter en SSH ou console
+2. Exécuter: bash /var/lib/vz/snippets/post-install-${VMID}.sh"
   
   qm set "$VMID" -description "$DESCRIPTION" >/dev/null
   
@@ -476,35 +499,44 @@ Utilisateur: root uniquement"
     echo -e "\n${BGN}=== VM CRÉÉE AVEC SUCCÈS ===${CL}"
     echo -e "ID: ${BL}$VMID${CL}"
     echo -e "Nom: ${BL}$HN${CL}"
+    echo -e "BIOS: ${BL}SeaBIOS (défaut)${CL}"
     echo -e "Utilisateur: ${BL}root${CL}"
     echo -e "Console: ${BL}qm terminal $VMID${CL}"
-    echo -e "\n${INFO}La VM va démarrer et configurer automatiquement le français.${CL}"
+    echo -e "\n${INFO}La VM démarre avec une configuration basique.${CL}"
+    echo -e "${INFO}Pour configurer le français, connectez-vous et exécutez:${CL}"
+    echo -e "${BL}bash /var/lib/vz/snippets/post-install-${VMID}.sh${CL}"
     echo -e "${INFO}Première connexion: utilisateur 'root' avec le mot de passe défini.${CL}"
   else
     echo -e "\n${BGN}VM créée mais non démarrée.${CL}"
     echo -e "Pour démarrer: ${BL}qm start $VMID${CL}"
+    echo -e "Pour configurer le français après démarrage:"
+    echo -e "${BL}bash /var/lib/vz/snippets/post-install-${VMID}.sh${CL}"
   fi
 }
 
 function show_usage() {
   echo -e "\n${INFO}Usage depuis GitHub:${CL}"
-  echo -e "  ${BL}curl -fsSL https://raw.githubusercontent.com/H1ok4r3d/VM/main/vm-debian.sh | bash${CL}"
+  echo -e "  ${BL}bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/H1ok4r3d/VM/main/vm-debian.sh)\"${CL}"
   echo -e "\n${INFO}Ou en root:${CL}"
-  echo -e "  ${BL}curl -fsSL https://raw.githubusercontent.com/H1ok4r3d/VM/main/vm-debian.sh | sudo bash${CL}"
+  echo -e "  ${BL}sudo bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/H1ok4r3d/VM/main/vm-debian.sh)\"${CL}"
 }
 
 function main() {
   header_info
   
   echo -e "\n${INFO}Ce script va créer une VM Debian 12 avec:${CL}"
-  echo -e "  • Langue française par défaut"
-  echo -e "  • Clavier français"
+  echo -e "  • BIOS par défaut (SeaBIOS)"
+  echo -e "  • Configuration post-installation pour le français"
   echo -e "  • Utilisateur root uniquement"
-  echo -e "  • Configuration Cloud-init automatique"
+  echo -e "  • Configuration Cloud-init basique"
   
   echo -e "\n"
   echo -n "Continuer ? (o/N): "
+  
+  # Forcer le flush et attendre l'entrée
+  exec < /dev/tty
   read continue_script
+  
   if [[ ! "$continue_script" =~ ^[oO]$ ]]; then
     echo -e "\n${CROSS}Script annulé${CL}"
     show_usage

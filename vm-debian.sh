@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 # Script de création de VM Debian 12 Cloud-Init pour Proxmox
-# Version finale avec connexion root et option de démarrage
+# Version optimisée avec gestion automatique des VMID, CPU et paramètres par défaut
 # Auteur: Thierry AZZARO (Hiok4r3d)
 
 set -euo pipefail
@@ -17,28 +17,28 @@ function header_info() {
 \____/ \___| |_.__/|_|\__,_|_| |_| |_|  |_|    \__,_| | | |  \/    |_|  |_|
                                                       |_| |_|               
         === Création VM Debian 12 - Configuration Française ===
-                 Version Finale - Root Login - AZERTY
+                 Version Optimisée - Paramètres Automatiques
 EOF
 }
 
-# Fonctions de message
-function msg_info() {
-  echo -e "  \e[36m➤\e[0m $1"
-}
-function msg_ok() {
-  echo -e "  \e[32m✔️\e[0m $1"
-}
-function msg_error() {
-  echo -e "  \e[31m✖️\e[0m $1" >&2
-  exit 1
-}
+# Fonctions utilitaires
+function msg_info() { echo -e "  \e[36m➤\e[0m $1"; }
+function msg_ok() { echo -e "  \e[32m✔️\e[0m $1"; }
+function msg_error() { echo -e "  \e[31m✖️\e[0m $1" >&2; exit 1; }
 
 # Vérification des dépendances
 for cmd in qm wget; do
-  if ! command -v $cmd >/dev/null 2>&1; then
-    msg_error "$cmd n'est pas installé. Installation requise."
-  fi
+  command -v $cmd >/dev/null 2>&1 || msg_error "$cmd n'est pas installé."
 done
+
+# Fonction pour trouver le premier VMID disponible
+function find_available_vmid() {
+  local start_vmid=${1:-100}
+  while qm list | awk '{print $1}' | grep -q "^${start_vmid}$"; do
+    ((start_vmid++))
+  done
+  echo $start_vmid
+}
 
 header_info
 
@@ -47,11 +47,20 @@ read -p $'\nÊtes-vous sûr de vouloir créer une nouvelle VM ? (o/N): ' CREATE_
 [[ "$CREATE_CONFIRM" =~ ^[Oo]$ ]] || exit 0
 
 # --- Configuration de base ---
-read -p $'\nID de la VM (défaut: 107): ' VMID
-VMID=${VMID:-107}
+DEFAULT_VMID=$(find_available_vmid 100)
+read -p $'\nID de la VM (défaut: premier disponible à partir de 100 - actuel: '$DEFAULT_VMID$'): ' VMID
+VMID=${VMID:-$DEFAULT_VMID}
 
 read -p "Nom d'hôte (défaut: debian-fr): " VMNAME
 VMNAME=${VMNAME:-debian-fr}
+
+# --- Configuration matérielle ---
+CPU_CORES=$(nproc --all)
+RAM_SIZE=2048
+DISK_SIZE=20
+SCSI_CONTROLLER="virtio-scsi-pci"
+BIOS="seabios"
+FIREWALL=1
 
 # --- Sélection du réseau ---
 echo -e "\n  💡  Bridges réseau disponibles:"
@@ -76,18 +85,24 @@ echo -e "\n  💡  Configuration du mot de passe root"
 ROOT_PASSWORD="root"
 msg_info "Mot de passe par défaut: root (changement obligatoire au premier login)"
 
-read -p "Taille du disque en GB (défaut: 20): " DISK_SIZE
-DISK_SIZE=${DISK_SIZE:-20}
+read -p "Taille du disque en GB (défaut: $DISK_SIZE): " CUSTOM_DISK_SIZE
+DISK_SIZE=${CUSTOM_DISK_SIZE:-$DISK_SIZE}
+
+read -p "Nombre de cœurs CPU (max disponible: $CPU_CORES, défaut: $((CPU_CORES/2))): " CUSTOM_CPU_CORES
+CPU_CORES=${CUSTOM_CPU_CORES:-$((CPU_CORES/2))}
 
 # --- Résumé ---
 echo -e "\n=== RÉSUMÉ DE LA CONFIGURATION ==="
-echo "ID VM: $VMID"
+echo "ID VM: $VMID (automatique)"
 echo "Nom d'hôte: $VMNAME"
 echo "Bridge: $BRIDGE"
 echo "Stockage: $STORAGE"
 echo "Taille disque: ${DISK_SIZE}G"
-echo "CPU: 4 cœurs"
-echo "RAM: 2048 MB"
+echo "CPU: $CPU_CORES cœurs/$CPU_CORES vCPU"
+echo "RAM: ${RAM_SIZE} MB"
+echo "Contrôleur SCSI: $SCSI_CONTROLLER"
+echo "BIOS: $BIOS"
+echo "Firewall: $FIREWALL"
 echo "Clavier: AZERTY Français"
 echo "Mot de passe: root (à changer au 1er login)"
 read -p $'\nConfirmer la création ? (o/N): ' CONFIRM
@@ -103,11 +118,12 @@ msg_ok "Image téléchargée avec succès"
 msg_info "Création de la VM $VMID"
 qm create $VMID \
   --name "$VMNAME" \
-  --memory 2048 \
-  --cores 4 \
-  --net0 virtio,bridge="$BRIDGE" \
+  --memory $RAM_SIZE \
+  --cores $CPU_CORES \
+  --net0 virtio,bridge="$BRIDGE",firewall=$FIREWALL \
   --ostype l26 \
-  --scsihw virtio-scsi-pci \
+  --scsihw $SCSI_CONTROLLER \
+  --bios $BIOS \
   --ide2 "${STORAGE}:cloudinit" \
   --boot order=scsi0 \
   --serial0 socket \
@@ -118,7 +134,7 @@ qm create $VMID \
   --agent enabled=1 >/dev/null || msg_error "Échec de la création de la VM"
 msg_ok "VM créée avec succès"
 
-# --- Configuration Cloud-Init pour SSH ---
+# --- Configuration Cloud-Init ---
 msg_info "Configuration SSH et mot de passe root"
 cat <<EOF > /tmp/vm-${VMID}-cloudinit.yaml
 #cloud-config

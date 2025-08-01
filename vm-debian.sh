@@ -354,26 +354,41 @@ function create_vm() {
   
   # Import du disque avec gestion d'erreur
   msg_info "Import du disque système"
-  if ! qm importdisk $VMID "${FILE}" $STORAGE --format qcow2 >/dev/null 2>&1; then
-    msg_error "Échec de l'import du disque"
+  local IMPORT_OUTPUT
+  if ! IMPORT_OUTPUT=$(qm importdisk $VMID "${FILE}" $STORAGE --format qcow2 2>&1); then
+    msg_error "Échec de l'import du disque: $IMPORT_OUTPUT"
     qm destroy $VMID --purge >/dev/null 2>&1
     exit 1
   fi
   
-  # Attacher le disque importé
+  # Extraire le nom exact du disque importé depuis la sortie
+  local DISK_NAME
+  DISK_NAME=$(echo "$IMPORT_OUTPUT" | grep -o "vm-${VMID}-disk-[0-9]*" | head -1)
+  
+  if [ -z "$DISK_NAME" ]; then
+    # Fallback: essayer le nom standard
+    DISK_NAME="vm-${VMID}-disk-0"
+  fi
+  
+  # Attacher le disque importé avec le nom exact
   msg_info "Configuration du disque principal"
-  if ! qm set $VMID --scsi0 ${STORAGE}:vm-${VMID}-disk-0,discard=on,ssd=1 >/dev/null 2>&1; then
-    msg_error "Échec de la configuration du disque principal"
-    qm destroy $VMID --purge >/dev/null 2>&1
-    exit 1
+  if ! qm set $VMID --scsi0 ${STORAGE}:${DISK_NAME},discard=on,ssd=1 2>/dev/null; then
+    # Essayer sans les options avancées
+    if ! qm set $VMID --scsi0 ${STORAGE}:${DISK_NAME} 2>/dev/null; then
+      msg_error "Échec de la configuration du disque principal"
+      echo "Debug: Tentative d'attachement de ${STORAGE}:${DISK_NAME}"
+      # Lister les disques disponibles pour debug
+      echo "Disques disponibles:"
+      pvesm list $STORAGE | grep "vm-${VMID}"
+      qm destroy $VMID --purge >/dev/null 2>&1
+      exit 1
+    fi
   fi
   
   # Ajouter le disque Cloud-init
   msg_info "Configuration Cloud-init"
-  if ! qm set $VMID --ide2 ${STORAGE}:cloudinit >/dev/null 2>&1; then
-    msg_error "Échec de la configuration Cloud-init"
-    qm destroy $VMID --purge >/dev/null 2>&1
-    exit 1
+  if ! qm set $VMID --ide2 ${STORAGE}:cloudinit 2>/dev/null; then
+    msg_warn "Impossible de créer le disque Cloud-init, on continue sans"
   fi
   
   # Configuration du boot et série

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 # Script de création de VM Debian 12 Cloud-Init pour Proxmox
-# Version GitHub - Configuration Française AZERTY
+# Version finale avec connexion root et option de démarrage
 # Auteur: Thierry AZZARO (Hiok4r3d)
 
 set -euo pipefail
@@ -17,7 +17,7 @@ function header_info() {
 \____/ \___| |_.__/|_|\__,_|_| |_| |_|  |_|    \__,_| | | |  \/    |_|  |_|
                                                       |_| |_|               
         === Création VM Debian 12 - Configuration Française ===
-                 Version GitHub - AZERTY - Cloud-Init
+                 Version Finale - Root Login - AZERTY
 EOF
 }
 
@@ -118,11 +118,32 @@ qm create $VMID \
   --agent enabled=1 >/dev/null || msg_error "Échec de la création de la VM"
 msg_ok "VM créée avec succès"
 
-# --- Configuration Cloud-Init ---
-msg_info "Configuration du changement obligatoire de mot de passe"
-qm set $VMID --sshkeys /dev/null >/dev/null  # Force le changement de mot de passe
-msg_ok "Sécurité configurée (changement mot de passe obligatoire)"
+# --- Configuration Cloud-Init pour SSH ---
+msg_info "Configuration SSH et mot de passe root"
+cat <<EOF > /tmp/vm-${VMID}-cloudinit.yaml
+#cloud-config
+package_update: true
+packages:
+  - openssh-server
+  - qemu-guest-agent
+users:
+  - name: root
+    lock_passwd: false
+    plain_text_passwd: "$ROOT_PASSWORD"
+    sudo: ALL=(ALL) NOPASSWD:ALL
+chpasswd:
+  expire: true
+runcmd:
+  - systemctl enable --now ssh
+  - systemctl enable --now qemu-guest-agent
+  - sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config
+  - systemctl restart sshd
+EOF
 
+qm set $VMID --cicustom "user=local:snippets/vm-${VMID}-cloudinit.yaml" >/dev/null
+msg_ok "Configuration SSH appliquée"
+
+# --- Configuration du disque ---
 msg_info "Importation du disque"
 qm importdisk "$VMID" /tmp/debian-12.qcow2 "$STORAGE" >/dev/null || msg_error "Échec de l'importation"
 msg_ok "Disque importé avec succès"
@@ -135,28 +156,41 @@ qm set "$VMID" --scsi0 "${IMPORTED_DISK},discard=on,ssd=1" >/dev/null
 qm resize "$VMID" scsi0 "${DISK_SIZE}G" >/dev/null
 msg_ok "Disque configuré (${DISK_SIZE}GB)"
 
-msg_info "Configuration réseau et cloud-init"
+# --- Configuration réseau ---
+msg_info "Configuration réseau"
 qm set "$VMID" \
   --searchdomain local \
   --nameserver 1.1.1.1 \
   --ipconfig0 ip=dhcp >/dev/null
+msg_ok "Réseau configuré"
 
-# Configuration du fuseau horaire via cloud-init
-cat <<EOF > /tmp/vm-${VMID}-cloudinit.yaml
-#cloud-config
-timezone: Europe/Paris
-locale: fr_FR.UTF-8
-keyboard:
-  layout: fr
-  variant: azerty
-EOF
-qm set "$VMID" --cicustom "user=local:snippets/vm-${VMID}-cloudinit.yaml" >/dev/null
-msg_ok "Configuration Cloud-Init appliquée"
+# --- Option de démarrage ---
+read -p $'\nVoulez-vous démarrer la VM maintenant ? (o/N): ' START_VM
+if [[ "$START_VM" =~ ^[Oo]$ ]]; then
+  msg_info "Démarrage de la VM $VMID"
+  qm start "$VMID" >/dev/null || msg_error "Échec du démarrage"
+  
+  # Attente de l'adresse IP
+  msg_info "Attente de l'adresse IP..."
+  for i in {1..10}; do
+    VM_IP=$(qm guest cmd "$VMID" network-get-interfaces | grep -oP '(?<=ip-address: )\d+\.\d+\.\d+\.\d+' | head -1)
+    [ -n "$VM_IP" ] && break
+    sleep 3
+  done
+  
+  if [ -n "$VM_IP" ]; then
+    msg_ok "VM démarrée avec succès - IP: $VM_IP"
+    echo -e "\nConnexion SSH:"
+    echo "ssh root@$VM_IP"
+    echo "Mot de passe: root (à changer immédiatement)"
+  else
+    msg_info "VM démarrée mais adresse IP non obtenue automatiquement"
+  fi
+fi
 
 # --- Nettoyage ---
 rm -f /tmp/debian-12.qcow2
-[ -f "/tmp/vm-${VMID}-cloudinit.yaml" ] && mv "/tmp/vm-${VMID}-cloudinit.yaml" "/var/lib/vz/snippets/"
+mv "/tmp/vm-${VMID}-cloudinit.yaml" "/var/lib/vz/snippets/" 2>/dev/null || true
 
-msg_ok "VM $VMID '$VMNAME' prête à l'emploi !"
-msg_info "Connexion SSH: root@IP_VM - Mot de passe: root (à changer)"
 echo -e "\n=== CRÉATION TERMINÉE AVEC SUCCÈS ==="
+echo -e "Pour vous connecter plus tard:\n  ssh root@<IP_VM>\nMot de passe: root"

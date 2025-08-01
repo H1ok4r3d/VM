@@ -2,47 +2,33 @@
 
 Ce script Bash permet de créer une machine virtuelle Debian 12 « Cloud-Init Ready » sur Proxmox VE avec une configuration optimisée pour un usage francophone.
 
-## 🚀 Nouveautés et améliorations
+## ⚠️ Authentification et sécurité (IMPORTANT)
+- **Accès root uniquement** : Aucun autre utilisateur n'est créé par défaut
+- **Mot de passe par défaut** : 
+  - Identifiant : `root`
+  - Mot de passe : `root` (temporaire)
+- **Changement obligatoire** : 
+  - Vous devrez **impérativement** changer le mot de passe au premier login
+  - Le système forcera ce changement avant toute opération
+  - Minimum 8 caractères recommandé
 
+## 🚀 Nouveautés et améliorations
 - **Gestion intelligente des VMID** : Trouve automatiquement le premier ID disponible
-- **Configuration matérielle optimale** :
-  - Détection automatique des cœurs CPU disponibles
-  - BIOS SeaBIOS par défaut
-  - Contrôleur SCSI VirtIO par défaut
-  - Firewall activé (=1) sur l'interface réseau
-- **Sécurité renforcée** :
-  - Mot de passe root temporaire (changé au premier login)
-  - Configuration automatique de SSH sécurisé
-  - Expiration du mot de passe forcée
-- **Robustesse améliorée** :
-  - Vérification des conflits de VMID/CTID
-  - Double tentative de démarrage
-  - Gestion des erreurs complète
+- **Configuration root sécurisée** : Expiration immédiate du mot de passe
+- **Détection automatique** des ressources CPU disponibles
+- **Firewall activé** par défaut sur l'interface réseau
 
 ## 📦 Fonctionnalités principales
-
-- Téléchargement de l'image officielle Debian 12 Cloud
-- Création de la VM avec Cloud-Init (accès root)
-- Configuration automatique :
-  - Taille du disque (20GB par défaut, personnalisable)
-  - Nombre de cœurs CPU (détection automatique)
-  - Mémoire RAM (2048MB par défaut)
-  - Réseau (sélection parmi les bridges disponibles)
-  - Stockage (sélection parmi les stockages disponibles)
-- Langue système et clavier AZERTY **français**
-- Interface interactive intuitive avec valeurs par défaut intelligentes
-- Option de démarrage automatique après création
+- Création VM avec **accès root exclusif**
+- Configuration AZERTY **français** par défaut
+- Taille du disque personnalisable (20GB par défaut)
+- Sélection interactive des bridges réseau et stockages
 
 ## ✅ Prérequis
+- Proxmox VE 7.x+
+- 2GB RAM minimum recommandé
+- Droits root sur le serveur Proxmox
 
-- Proxmox VE 7.x ou supérieur
-- Un stockage compatible avec les images (format `qcow2`)
-- Un bridge réseau configuré
-- Packages requis : `wget`, `qm` (inclus dans Proxmox)
-- Environnement Bash
-
-## 🛠️ Installation et utilisation
-
-1. Téléchargement et exécution directe :
+## 🛠️ Utilisation
 ```bash
 bash -c "$(curl -fsSL https://raw.githubusercontent.com/H1ok4r3d/VM/main/vm-debian.sh)"

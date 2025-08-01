@@ -297,7 +297,7 @@ function get_vm_settings() {
   echo -e "Bridge: ${BL}$BRG${CL}"
   echo -e "Stockage: ${BL}$STORAGE${CL}"
   echo -e "Taille disque: ${BL}$DISK_SIZE${CL}"
-  echo -e "CPU: ${BL}$CORE_COUNT cœurs${CL}"
+  echo -e "CPU: ${BL}$CORE_COUNT cœurs (maximum disponible)${CL}"
   echo -e "RAM: ${BL}$RAM_SIZE MB${CL}"
   echo -e "MAC: ${BL}$GEN_MAC${CL}"
   echo -e "BIOS: ${BL}SeaBIOS (défaut)${CL}"
@@ -350,22 +350,6 @@ function create_vm() {
   
   local FILE="$TEMP_DIR/debian-12-genericcloud-amd64.qcow2"
   
-  # Déterminer le type de stockage
-  local STORAGE_TYPE=$(pvesm status -storage $STORAGE | awk 'NR>1 {print $2}')
-  local DISK_EXT=".qcow2"
-  local DISK_REF="$VMID/"
-  local DISK_IMPORT="-format qcow2"
-  
-  case $STORAGE_TYPE in
-    btrfs)
-      DISK_EXT=".raw"
-      DISK_IMPORT="-format raw"
-      ;;
-  esac
-  
-  local DISK0="vm-${VMID}-disk-0${DISK_EXT}"
-  local DISK0_REF="${STORAGE}:${DISK_REF}${DISK0}"
-  
   # Création de la VM avec BIOS par défaut (SeaBIOS)
   qm create $VMID \
     -agent 1 \
@@ -379,15 +363,45 @@ function create_vm() {
     -ostype l26 \
     -scsihw virtio-scsi-pci
   
-  # Import du disque directement
-  qm importdisk $VMID ${FILE} $STORAGE ${DISK_IMPORT} 1>&/dev/null
+  if [ $? -ne 0 ]; then
+    msg_error "Échec de la création de la VM"
+    exit 1
+  fi
   
-  # Configuration du disque principal
+  # Import du disque avec gestion d'erreur
+  msg_info "Import du disque système"
+  if ! qm importdisk $VMID "${FILE}" $STORAGE --format qcow2 >/dev/null 2>&1; then
+    msg_error "Échec de l'import du disque"
+    qm destroy $VMID --purge >/dev/null 2>&1
+    exit 1
+  fi
+  
+  # Attacher le disque importé
+  msg_info "Configuration du disque principal"
+  if ! qm set $VMID --scsi0 ${STORAGE}:vm-${VMID}-disk-0,discard=on,ssd=1 >/dev/null 2>&1; then
+    msg_error "Échec de la configuration du disque principal"
+    qm destroy $VMID --purge >/dev/null 2>&1
+    exit 1
+  fi
+  
+  # Redimensionner le disque si nécessaire
+  if [[ "${DISK_SIZE}" != "20G" ]]; then
+    msg_info "Redimensionnement du disque à ${DISK_SIZE}"
+    qm resize $VMID scsi0 ${DISK_SIZE} >/dev/null 2>&1
+  fi
+  
+  # Ajouter le disque Cloud-init
+  msg_info "Configuration Cloud-init"
+  if ! qm set $VMID --ide2 ${STORAGE}:cloudinit >/dev/null 2>&1; then
+    msg_error "Échec de la configuration Cloud-init"
+    qm destroy $VMID --purge >/dev/null 2>&1
+    exit 1
+  fi
+  
+  # Configuration du boot et série
   qm set $VMID \
-    -scsi0 ${STORAGE}:vm-${VMID}-disk-0,discard=on,ssd=1,size=${DISK_SIZE} \
-    -ide2 ${STORAGE}:cloudinit \
-    -boot order=scsi0 \
-    -serial0 socket >/dev/null
+    --boot order=scsi0 \
+    --serial0 socket >/dev/null 2>&1
   
   msg_ok "VM créée avec l'ID: $VMID"
 }
@@ -521,6 +535,8 @@ function main() {
   echo -e "  • Configuration post-installation pour le français"
   echo -e "  • Utilisateur root uniquement"
   echo -e "  • Configuration Cloud-init basique"
+  echo -e "  • CPU: Utilisation maximale ($(nproc) cœurs)"
+  echo -e "  • RAM: 2048 MB par défaut"
   
   echo -e "\n"
   echo -n "Continuer ? (o/N): "

@@ -291,7 +291,7 @@ function import_disk() {
   
   # Import avec capture de sortie
   local import_result
-  import_result=$(qm importdisk $VMID "$FILE" $STORAGE 2>&1)
+  import_result=$(qm importdisk $VMID "$FILE" $STORAGE --format qcow2 2>&1)
   
   if [ $? -ne 0 ]; then
     msg_error "Échec import disque"
@@ -302,21 +302,42 @@ function import_disk() {
   
   msg_ok "Disque importé"
   
-  # Configuration du disque
-  msg_info "Configuration du disque"
+  # Attendre que le disque soit disponible
+  sleep 2
   
-  # Essayer différentes approches
-  if qm set $VMID --scsi0 ${STORAGE}:vm-${VMID}-disk-0 >/dev/null 2>&1; then
-    msg_ok "Disque configuré"
-  elif qm set $VMID --virtio0 ${STORAGE}:vm-${VMID}-disk-0 >/dev/null 2>&1; then
-    msg_ok "Disque configuré (virtio)"
-    # Ajuster le boot order
+  # Déterminer le nom exact du disque créé
+  local disk_name
+  disk_name=$(pvesm list $STORAGE | grep "vm-${VMID}-disk" | awk '{print $1}' | head -1)
+  
+  if [ -z "$disk_name" ]; then
+    msg_error "Disque importé non trouvé"
+    echo "Disques disponibles dans $STORAGE:"
+    pvesm list $STORAGE | grep -E "(vm-${VMID}|unused)"
+    qm destroy $VMID --purge >/dev/null 2>&1
+    exit 1
+  fi
+  
+  msg_info "Configuration du disque ($disk_name)"
+  
+  # Essayer d'attacher le disque en SCSI0 d'abord
+  if qm set $VMID --scsi0 "${disk_name}" >/dev/null 2>&1; then
+    msg_ok "Disque configuré (SCSI)"
+    # Définir l'ordre de boot
+    qm set $VMID --boot order=scsi0 >/dev/null 2>&1
+  # Sinon essayer en VirtIO
+  elif qm set $VMID --virtio0 "${disk_name}" >/dev/null 2>&1; then
+    msg_ok "Disque configuré (VirtIO)"
+    # Définir l'ordre de boot
     qm set $VMID --boot order=virtio0 >/dev/null 2>&1
+  # En dernier recours, essayer en IDE
+  elif qm set $VMID --ide0 "${disk_name}" >/dev/null 2>&1; then
+    msg_ok "Disque configuré (IDE)"
+    qm set $VMID --boot order=ide0 >/dev/null 2>&1
   else
     msg_error "Échec configuration disque"
-    # Lister les disques pour debug
-    echo "Disques disponibles:"
-    pvesm list $STORAGE | grep "vm-${VMID}" || echo "Aucun disque trouvé"
+    echo "Impossible d'attacher le disque: $disk_name"
+    echo "Configuration actuelle de la VM:"
+    qm config $VMID
     qm destroy $VMID --purge >/dev/null 2>&1
     exit 1
   fi
@@ -325,24 +346,39 @@ function import_disk() {
 function configure_vm() {
   msg_info "Configuration Cloud-init"
   
-  # Cloud-init basique
+  # Déterminer le type de disque configuré
+  local boot_device
+  if qm config $VMID | grep -q "^scsi0:"; then
+    boot_device="scsi0"
+  elif qm config $VMID | grep -q "^virtio0:"; then
+    boot_device="virtio0"
+  elif qm config $VMID | grep -q "^ide0:"; then
+    boot_device="ide0"
+  else
+    msg_error "Aucun disque de boot trouvé"
+    exit 1
+  fi
+  
+  # Cloud-init configuration
   qm set $VMID \
     --ciuser root \
     --cipassword "$ROOT_PASSWORD" \
     --serial0 socket \
-    --boot order=scsi0 >/dev/null 2>&1 || \
-  qm set $VMID \
-    --ciuser root \
-    --cipassword "$ROOT_PASSWORD" \
-    --serial0 socket \
-    --boot order=virtio0 >/dev/null 2>&1
+    --boot order=$boot_device >/dev/null 2>&1
+  
+  if [ $? -ne 0 ]; then
+    msg_error "Échec configuration cloud-init"
+    exit 1
+  fi
   
   # Redimensionner si nécessaire
   if [[ "$DISK_SIZE" != "20G" ]]; then
-    msg_info "Redimensionnement disque"
-    timeout 30 qm resize $VMID scsi0 $DISK_SIZE >/dev/null 2>&1 || \
-    timeout 30 qm resize $VMID virtio0 $DISK_SIZE >/dev/null 2>&1 || \
-    msg_warn "Timeout redimensionnement"
+    msg_info "Redimensionnement disque vers $DISK_SIZE"
+    if ! timeout 30 qm resize $VMID $boot_device $DISK_SIZE >/dev/null 2>&1; then
+      msg_warn "Timeout ou échec redimensionnement"
+    else
+      msg_ok "Disque redimensionné"
+    fi
   fi
   
   msg_ok "VM configurée"

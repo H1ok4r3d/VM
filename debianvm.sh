@@ -542,7 +542,7 @@ function start_vm() {
       echo -e "│                                             │"
       echo -e "│  🆔 ID VM: ${BL}$VMID${CL}                               │"
       echo -e "│  🏠 Nom: ${BL}$HN${CL}                            │"
-      echo -e "│  🌐 IP: ${BL}${vm_ip:-'En cours d\'attribution...'}${CL}                     │"
+      echo -e "│  🌐 IP: ${BL}${vm_ip:-En cours d attribution...}${CL}                     │"
       echo -e "│  💾 Stockage: ${BL}$STORAGE${CL}                        │"
       echo -e "│                                             │"
       echo -e "└─────────────────────────────────────────────┘"

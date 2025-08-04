@@ -3,7 +3,7 @@
 # Script de création VM Debian 12 - Configuration Française avec sécurité renforcée
 # Repository: https://github.com/H1ok4r3d/VM
 # Auteur: H1ok4r3d
-# License: MIT
+# License: MIT | https://github.com/H1ok4r3d/VM/raw/main/LICENSE
 
 # Mode debug si argument --debug
 if [[ "$1" == "--debug" ]]; then
@@ -287,7 +287,7 @@ runcmd:
   - sed -i 's/#PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config
   - systemctl reload ssh
   - echo "🔐 ATTENTION: Vous devez changer le mot de passe root à la première connexion!" > /etc/motd
-  - echo "🔑 Le mot de passe temporaire est: TempPass123!" >> /etc/motd
+  - echo "🔑 Le mot de passe temporaire est: root" >> /etc/motd
   - echo "🛠️  Utilisez la commande 'passwd' pour le changer." >> /etc/motd
   - echo "🖥️  VM créée avec le script H1ok4r3d" >> /etc/motd
 
@@ -317,7 +317,7 @@ packages:
 final_message: |
   🎉 La VM Debian 12 est prête !
   🔐 ATTENTION: Changez le mot de passe root à la première connexion !
-  🔑 Mot de passe temporaire: TempPass123!
+  🔑 Mot de passe temporaire: root
 EOF
 
   # Créer le fichier meta-data
@@ -455,7 +455,7 @@ function configure_vm() {
     -cipassword "$ROOT_PASSWORD" \
     -ipconfig0 ip=dhcp \
     -searchdomain local \
-    -nameserver 8.8.8.8 >/dev/null 2>&1
+    -nameserver 1.1.1.1 >/dev/null 2>&1
   
   if [ $? -ne 0 ]; then
     msg_error "Échec configuration cloud-init"
@@ -491,7 +491,7 @@ function configure_vm() {
   <h2>🐧 VM Debian 12 Sécurisée</h2>
   <p><strong>Créée avec le script H1ok4r3d</strong></p>
   <p>🔐 <strong>Sécurité renforcée:</strong> Changement de mot de passe obligatoire</p>
-  <p>🔑 <strong>Mot de passe temporaire:</strong> TempPass123!</p>
+  <p>🔑 <strong>Mot de passe temporaire:</strong> root</p>
   <p>🖥️ <strong>Hostname:</strong> $HN</p>
   <p>💾 <strong>Stockage:</strong> $STORAGE</p>
   <p>🌐 <strong>Bridge:</strong> $BRG</p>
